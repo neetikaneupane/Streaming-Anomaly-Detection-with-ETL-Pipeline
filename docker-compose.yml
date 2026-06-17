@@ -1,0 +1,327 @@
+
+
+# ─────────────────────────────────────────────
+#  NETWORKS
+# ─────────────────────────────────────────────
+networks:
+  pipeline_net:
+    driver: bridge
+
+# ─────────────────────────────────────────────
+#  VOLUMES
+# ─────────────────────────────────────────────
+volumes:
+  zookeeper_data:
+  kafka_data:
+  timescaledb_data:
+  minio_data:
+  airflow_postgres_data:
+  airflow_logs:
+  rocksdb_data:
+
+# ─────────────────────────────────────────────
+#  SERVICES
+# ─────────────────────────────────────────────
+services:
+
+  # ── 1. ZOOKEEPER ──────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. KAFKA BROKER ───────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"       # host access for producer / consumers
+      - "29092:29092"     # inter-container access
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── 3. KAFKA TOPIC INIT ───────────────────
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Waiting for Kafka to be ready...'
+      sleep 5
+
+      echo 'Creating topics...'
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic raw-metrics \
+        --partitions 3 \
+        --replication-factor 1
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic anomalies \
+        --partitions 3 \
+        --replication-factor 1
+
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists \
+        --topic normal-events \
+        --partitions 3 \
+        --replication-factor 1
+
+      echo 'Topics created:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
+
+  # ── 4. KAFKA UI ───────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - pipeline_net
+
+  # ── 5. TIMESCALEDB ────────────────────────
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: timescaledb
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: pipeline_user
+      POSTGRES_PASSWORD: pipeline_pass
+      POSTGRES_DB: metrics_db
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./infra/timescale_init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pipeline_user -d metrics_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── 6. MINIO (S3-compatible) ──────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # MinIO Console UI
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_password
+    volumes:
+      - minio_data:/data
+    networks:
+      - pipeline_net
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 7. MINIO BUCKET INIT ──────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Waiting for MinIO...'
+      sleep 3
+      mc alias set local http://minio:9000 minio_admin minio_password
+      mc mb --ignore-existing local/normal-events
+      mc mb --ignore-existing local/anomaly-reports
+      mc mb --ignore-existing local/etl-processed
+      echo 'Buckets created:'
+      mc ls local
+      "
+
+  # ── 8. AIRFLOW METADATA DB (Postgres) ─────
+  airflow-postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    networks:
+      - pipeline_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 9. AIRFLOW INIT ───────────────────────
+  airflow-init:
+    image: apache/airflow:2.8.1
+    container_name: airflow-init
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nfdstg="
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "streaming_pipeline_secret"
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - pipeline_net
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@pipeline.com \
+          --password admin || true
+        echo "Airflow init complete"
+
+  # ── 10. AIRFLOW WEBSERVER ─────────────────
+  airflow-webserver:
+    image: apache/airflow:2.8.1
+    container_name: airflow-webserver
+    restart: unless-stopped
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "8081:8080"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nfdstg="
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "streaming_pipeline_secret"
+      # Connection strings available to DAGs
+      TIMESCALE_CONN: postgresql+psycopg2://pipeline_user:pipeline_pass@timescaledb/metrics_db
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minio_admin
+      MINIO_SECRET_KEY: minio_password
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - pipeline_net
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── 11. AIRFLOW SCHEDULER ─────────────────
+  airflow-scheduler:
+    image: apache/airflow:2.8.1
+    container_name: airflow-scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nfdstg="
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "streaming_pipeline_secret"
+      TIMESCALE_CONN: postgresql+psycopg2://pipeline_user:pipeline_pass@timescaledb/metrics_db
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minio_admin
+      MINIO_SECRET_KEY: minio_password
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - pipeline_net
+    command: scheduler
+
+# ─────────────────────────────────────────────
+#  PORT SUMMARY (for reference)
+#  8080  → Kafka UI
+#  8081  → Airflow UI       (admin / admin)
+#  9000  → MinIO S3 API
+#  9001  → MinIO Console    (minio_admin / minio_password)
+#  9092  → Kafka broker     (from your Mac terminal)
+#  5432  → TimescaleDB      (pipeline_user / pipeline_pass)
+# ─────────────────────────────────────────────
