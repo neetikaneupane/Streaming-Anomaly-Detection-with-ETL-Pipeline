@@ -59,7 +59,10 @@ def extract_from_minio(**context):
     combined = pd.concat(dfs, ignore_index=True)
     print(f"Extracted {len(combined)} total records")
 
-    # push to XCom
+    # convert timestamp column to string BEFORE JSON serialization
+    if "event_timestamp" in combined.columns:
+     combined["event_timestamp"] = combined["event_timestamp"].astype(str)
+
     context["ti"].xcom_push(key="raw_records", value=combined.to_json())
     return len(combined)
 
@@ -95,6 +98,9 @@ def transform(**context):
     summary["anomaly_count"] = 0  # normal events — no anomalies
     summary["processed_at"]  = datetime.now(timezone.utc).isoformat()
 
+    # convert window timestamp to ISO string BEFORE JSON serialization
+    summary["window"] = summary["window"].astype(str)
+
     print(f"Transformed into {len(summary)} summary rows")
     context["ti"].xcom_push(key="summary", value=summary.to_json())
 
@@ -107,6 +113,7 @@ def load_to_timescale(**context):
         return
 
     summary = pd.read_json(summary_json)
+    summary["window"] = pd.to_datetime(summary["window"], utc=True)
     conn = psycopg2.connect(**TIMESCALE_CONN)
     cur  = conn.cursor()
 
@@ -119,7 +126,7 @@ def load_to_timescale(**context):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT DO NOTHING
         """, (
-            pd.to_datetime(row["window"], utc=True),
+            row["window"],
             row["metric_name"],
             row["host"],
             row["avg_value"],
