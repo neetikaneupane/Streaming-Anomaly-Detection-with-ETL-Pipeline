@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 
 # ─── CONFIG ───────────────────────────────────────
-KAFKA_BOOTSTRAP = "localhost:9092"
+KAFKA_BOOTSTRAP = "kafka:29092"
 WINDOW_SIZE_S = 60
 WINDOW_GRACE_S = 30
 STATE_WINDOW_COUNT = 10
@@ -13,7 +13,7 @@ ANOMALY_ZSCORE_THRESHOLD = 3.0
 app = faust.App(
     "anomaly-detector",
     broker=f"kafka://{KAFKA_BOOTSTRAP}",
-    store="memory://",
+    store="rocksdb://",
     topic_partitions=3,
     consumer_auto_offset_reset="earliest",
 )

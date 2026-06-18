@@ -325,3 +325,17 @@ services:
 #  9092  → Kafka broker     (from your Mac terminal)
 #  5432  → TimescaleDB      (pipeline_user / pipeline_pass)
 # ─────────────────────────────────────────────
+# ── 12. FAUST STREAM PROCESSOR ────────────
+  faust-worker:
+    build:
+      context: ./faust_app
+      dockerfile: Dockerfile
+    container_name: faust-worker
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    volumes:
+      - rocksdb_data:/app/anomaly-detector-data
