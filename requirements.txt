@@ -1,0 +1,16 @@
+# Producer
+kafka-python==2.0.2
+faker==19.13.0
+
+# Faust stream processor
+faust-streaming==0.11.3
+faust-streaming-rocksdb==0.10.0
+
+# Sinks
+psycopg2-binary==2.9.9
+boto3==1.33.13
+pandas==2.0.3
+pyarrow==14.0.2
+
+# Airflow (only needed if running airflow locally outside docker — usually NOT needed)
+# apache-airflow==2.8.1

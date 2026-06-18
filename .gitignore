@@ -1,1 +1,40 @@
-.venv311
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.venv311/
+venv/
+*.egg-info/
+
+# Faust state (RocksDB/memory store data)
+faust_app/anomaly-detector-data/
+
+# Airflow
+airflow/logs/
+airflow/*.cfg
+airflow/airflow.db
+airflow/standalone_admin_password.txt
+
+# Docker
+*.pid
+
+# Environment / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data files (avoid accidentally committing large local test data)
+*.parquet
+*.csv
