@@ -84,7 +84,8 @@ const flowCtx = flowCanvas.getContext("2d");
 function fitFlowCanvas() {
   const wrap = flowCanvas.parentElement;
   const w = wrap.clientWidth;
-  const h = Math.max(240, (w / VW) * VH);
+  const desired = (w / VW) * VH;
+  const h = Math.max(240, Math.min(desired, 420));
   const dpr = window.devicePixelRatio || 1;
   flowCanvas.style.height = h + "px";
   flowCanvas.width = Math.floor(w * dpr);
@@ -102,9 +103,10 @@ function active(node, now) {
 function drawFlow(now) {
   const dpr = window.devicePixelRatio || 1;
   const w = flowCanvas.width / dpr, h = flowCanvas.height / dpr;
-  const s = w / VW;
-  flowCtx.setTransform(dpr * s, 0, 0, dpr * s, 0, 0);
-  flowCtx.clearRect(0, 0, VW, VH);
+  const s = Math.min(w / VW, h / VH);
+  const ox = (w - VW * s) / 2, oy = (h - VH * s) / 2;
+  flowCtx.setTransform(dpr * s, 0, 0, dpr * s, dpr * ox, dpr * oy);
+  flowCtx.clearRect(-ox / s, -oy / s, VW + ox * 2 / s, VH + oy * 2 / s);
 
   // edges
   for (const e of EDGES) {
