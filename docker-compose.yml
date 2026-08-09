@@ -270,6 +270,7 @@ services:
       AIRFLOW__CORE__FERNET_KEY: "46BKJoQYlPPOexq0OhDZnIlNepKFf87WFwLt0nfdstg="
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__SECRET_KEY: "streaming_pipeline_secret"
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
       # Connection strings available to DAGs
       TIMESCALE_CONN: postgresql+psycopg2://pipeline_user:pipeline_pass@timescaledb/metrics_db
       MINIO_ENDPOINT: http://minio:9000

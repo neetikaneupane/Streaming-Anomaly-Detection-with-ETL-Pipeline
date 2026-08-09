@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Command Center</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="logo">◉</span>
+    <h1>STREAM&nbsp;COMMAND&nbsp;CENTER</h1>
+  </div>
+  <div class="hdr-right">
+    <span id="conn" class="conn down">● connecting</span>
+    <span id="clock" class="clock">--:--:--</span>
+  </div>
+</header>
+
+<section class="stats" id="stats">
+  <div class="stat"><span class="stat-label">RAW EV/s</span><span class="stat-val" id="st-raw">0.0</span></div>
+  <div class="stat"><span class="stat-label">ANOMALIES /2s</span><span class="stat-val warn" id="st-anom">0</span></div>
+  <div class="stat"><span class="stat-label">KAFKA LAG</span><span class="stat-val" id="st-lag">0</span></div>
+  <div class="stat"><span class="stat-label">TSDB ROWS</span><span class="stat-val" id="st-rows">0</span></div>
+  <div class="stat"><span class="stat-label">MINIO OBJS</span><span class="stat-val" id="st-objs">0</span></div>
+  <div class="stat dags"><span class="stat-label">DAG RUNS</span>
+    <div class="dag-chips" id="dag-chips"></div>
+  </div>
+</section>
+
+<main>
+  <section class="panel flow-panel">
+    <div class="panel-title">LIVE PIPELINE</div>
+    <div class="flow-wrap"><canvas id="flow"></canvas></div>
+  </section>
+
+  <aside class="panel feed-panel">
+    <div class="panel-title">ANOMALY FEED</div>
+    <ul id="feed" class="feed"><li class="feed-empty">waiting for anomalies…</li></ul>
+  </aside>
+</main>
+
+<section class="charts">
+  <div class="panel chart-panel">
+    <div class="panel-title">CPU USAGE <span class="unit">%</span></div>
+    <canvas id="chart-cpu"></canvas>
+  </div>
+  <div class="panel chart-panel">
+    <div class="panel-title">API LATENCY <span class="unit">ms</span></div>
+    <canvas id="chart-lat"></canvas>
+  </div>
+  <div class="panel chart-panel">
+    <div class="panel-title">ORDER VOLUME <span class="unit">count</span></div>
+    <canvas id="chart-vol"></canvas>
+  </div>
+</section>
+
+<section class="details">
+  <div class="panel">
+    <div class="panel-title">KAFKA TOPICS</div>
+    <table id="tbl-kafka"><tr><td colspan="2" class="muted">waiting…</td></tr></table>
+  </div>
+  <div class="panel">
+    <div class="panel-title">TIMESCALEDB</div>
+    <table id="tbl-db"><tr><td colspan="2" class="muted">waiting…</td></tr></table>
+  </div>
+  <div class="panel">
+    <div class="panel-title">MINIO / S3</div>
+    <table id="tbl-minio"><tr><td colspan="2" class="muted">waiting…</td></tr></table>
+  </div>
+  <div class="panel">
+    <div class="panel-title">FAUST / AIRFLOW</div>
+    <div id="faust-info" class="faust-info">waiting…</div>
+    <table id="tbl-airflow"><tr><td colspan="2" class="muted">waiting…</td></tr></table>
+  </div>
+</section>
+
+<footer>
+  pipeline: producer → kafka → faust → sinks → minio / timescaledb / airflow &nbsp;·&nbsp; z-score &gt; 3.0
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

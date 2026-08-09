@@ -101,12 +101,31 @@ docker exec airflow-webserver airflow dags trigger data_quality_check
 docker exec airflow-webserver airflow dags trigger anomaly_report
 ```
 
+## Live Dashboard
+
+A self-contained **command-center dashboard** (`dashboard/`) that visualizes the whole pipeline in real time — an animated flow diagram with data particles traveling through each stage, live metric charts, an anomaly feed, Kafka lag, TimescaleDB/MinIO counts, and Airflow DAG status.
+
+![dashboard](https://img.shields.io/badge/status-live-brightgreen)
+
+```bash
+python dashboard/server.py        # serves http://localhost:8082
+```
+
+Open http://localhost:8082 while the producer (and optionally the sinks) are running. The dashboard is stdlib-only on the backend and dependency-free on the frontend (vanilla canvas + Server-Sent Events) — no npm, no build step.
+
+It pulls live data from:
+- **Kafka** — subscribes to `raw-metrics` / `anomalies` / `normal-events` and streams each event to the browser; also reads topic end-offsets and sink consumer-group lag.
+- **TimescaleDB** — row counts per table and the most recent anomalies (`localhost:5433`).
+- **MinIO** — object counts for `normal-events` and `etl-processed`.
+- **Airflow REST API** — latest run state for the three DAGs (requires the API basic-auth backend enabled on the webserver, already set in `docker-compose.yml`).
+
 ## Ports & Credentials
 
 | Service      | Port | URL / Credentials                              |
 |--------------|------|------------------------------------------------|
 | Kafka UI     | 8080 | http://localhost:8080                          |
 | Airflow      | 8081 | http://localhost:8081 — `admin` / `admin`      |
+| Dashboard    | 8082 | http://localhost:8082                          |
 | MinIO API    | 9000 | `minio_admin` / `minio_password`               |
 | MinIO Console| 9001 | http://localhost:9001                          |
 | Kafka broker | 9092 | `localhost:9092`                               |
@@ -141,6 +160,9 @@ docker exec airflow-webserver airflow dags trigger anomaly_report
 ├── sinks/
 │   ├── anomaly_sink.py         # anomalies → TimescaleDB
 │   └── normal_sink.py          # normal events → MinIO Parquet
+├── dashboard/                  # live pipeline visualization
+│   ├── server.py               # stdlib HTTP + SSE backend
+│   └── static/                 # HTML/CSS/JS frontend (no deps)
 ├── airflow/dags/               # Airflow DAGs (ETL, quality, reporting)
 ├── infra/timescale_init.sql    # TimescaleDB schema + policies
 ├── monitoring/                 # (reserved)

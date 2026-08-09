@@ -1,0 +1,94 @@
+:root {
+  --bg: #0a0d16;
+  --panel: #10141f;
+  --panel2: #151b2a;
+  --line: #223050;
+  --text: #dce4f5;
+  --muted: #6b7c9b;
+  --cyan: #22d3ee;
+  --blue: #38bdf8;
+  --purple: #a78bfa;
+  --green: #34d399;
+  --amber: #fbbf24;
+  --red: #fb7185;
+  --pink: #f472b6;
+  --glow: 0 0 12px rgba(56, 189, 248, .45);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: radial-gradient(1200px 800px at 50% -10%, #101a30 0%, var(--bg) 55%);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  padding: 14px 18px 10px;
+  min-height: 100vh;
+}
+
+/* ── header ── */
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { color: var(--cyan); font-size: 22px; text-shadow: var(--glow); animation: pulse 2.4s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+h1 { font-size: 18px; letter-spacing: 3px; font-weight: 700; }
+.hdr-right { display: flex; align-items: center; gap: 16px; }
+.conn { font-size: 12px; padding: 4px 10px; border-radius: 20px; }
+.conn.up { color: var(--green); border: 1px solid var(--green); }
+.conn.down { color: var(--red); border: 1px solid var(--red); }
+.clock { color: var(--muted); font-size: 16px; letter-spacing: 1px; }
+
+/* ── stats bar ── */
+.stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 12px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.stat-label { display: block; color: var(--muted); font-size: 10px; letter-spacing: 1.5px; margin-bottom: 4px; }
+.stat-val { font-size: 22px; font-weight: 700; color: var(--cyan); }
+.stat-val.warn { color: var(--red); }
+.dag-chips { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.dag-chip { font-size: 10px; padding: 3px 8px; border-radius: 6px; background: var(--panel2); border: 1px solid var(--line); }
+.dag-chip .st { margin-left: 6px; }
+
+/* ── layout ── */
+main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; margin-bottom: 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.panel-title { color: var(--muted); font-size: 10px; letter-spacing: 2px; margin-bottom: 8px; }
+.unit { color: var(--muted); margin-left: 4px; }
+
+.flow-panel { min-height: 320px; }
+.flow-wrap { position: relative; height: 300px; }
+#flow { width: 100%; height: 100%; display: block; }
+
+/* ── feed ── */
+.feed { list-style: none; max-height: 292px; overflow-y: auto; }
+.feed::-webkit-scrollbar { width: 6px; }
+.feed::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.feed-empty { color: var(--muted); padding: 8px; }
+.feed li {
+  border-left: 3px solid var(--red);
+  background: linear-gradient(90deg, rgba(251,113,133,.08), transparent);
+  padding: 7px 9px; margin-bottom: 7px; border-radius: 0 8px 8px 0;
+  animation: flash 1.2s ease-out;
+}
+@keyframes flash { from { background: rgba(251,113,133,.35); } to { background: linear-gradient(90deg, rgba(251,113,133,.08), transparent); } }
+.feed .f-head { font-size: 11px; color: var(--text); }
+.feed .f-meta { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.feed .f-z { color: var(--red); font-weight: 700; }
+
+/* ── charts ── */
+.charts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 12px; }
+.chart-panel canvas { width: 100%; height: 150px; display: block; }
+
+/* ── details ── */
+.details { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+td { padding: 3px 4px; border-bottom: 1px solid var(--line); color: var(--text); }
+td:last-child { text-align: right; color: var(--cyan); }
+.muted { color: var(--muted) !important; text-align: left !important; }
+.faust-info { color: var(--muted); font-size: 11px; margin-bottom: 8px; line-height: 1.5; }
+
+footer { margin-top: 12px; color: var(--muted); font-size: 11px; letter-spacing: 1px; text-align: center; }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; }
+  .charts, .details, .stats { grid-template-columns: repeat(2, 1fr); }
+}
