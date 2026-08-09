@@ -136,7 +136,7 @@ services:
     container_name: timescaledb
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "5433:5432"   # 5433 on host — 5432 is taken by local Homebrew postgres
     environment:
       POSTGRES_USER: pipeline_user
       POSTGRES_PASSWORD: pipeline_pass
@@ -323,7 +323,7 @@ services:
 #  9000  → MinIO S3 API
 #  9001  → MinIO Console    (minio_admin / minio_password)
 #  9092  → Kafka broker     (from your Mac terminal)
-#  5432  → TimescaleDB      (pipeline_user / pipeline_pass)
+#  5433  → TimescaleDB      (pipeline_user / pipeline_pass; 5432 is the local Homebrew postgres)
 # ─────────────────────────────────────────────
 # ── 12. FAUST STREAM PROCESSOR ────────────
   faust-worker:

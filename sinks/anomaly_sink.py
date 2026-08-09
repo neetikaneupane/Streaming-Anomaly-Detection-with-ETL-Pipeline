@@ -7,7 +7,7 @@ from datetime import datetime
 KAFKA_BOOTSTRAP = "localhost:9092"
 TIMESCALE_CONN = {
     "host": "localhost",
-    "port": 5432,
+    "port": 5433,
     "dbname": "metrics_db",
     "user": "pipeline_user",
     "password": "pipeline_pass",
