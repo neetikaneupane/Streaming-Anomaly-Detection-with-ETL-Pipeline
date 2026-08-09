@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stream Command Center</title>
+<title>Streaming Pipeline Monitor</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <header>
   <div class="brand">
-    <span class="logo">◉</span>
-    <h1>STREAM&nbsp;COMMAND&nbsp;CENTER</h1>
+    <span class="logo"></span>
+    <h1>Streaming Pipeline Monitor</h1>
   </div>
   <div class="hdr-right">
-    <span id="conn" class="conn down">● connecting</span>
+    <span id="conn" class="conn down">connecting</span>
     <span id="clock" class="clock">--:--:--</span>
   </div>
 </header>
@@ -78,7 +78,7 @@
 </section>
 
 <footer>
-  pipeline: producer → kafka → faust → sinks → minio / timescaledb / airflow &nbsp;·&nbsp; z-score &gt; 3.0
+  producer &rarr; kafka &rarr; faust &rarr; sinks &rarr; minio / timescaledb / airflow &nbsp;·&nbsp; z-score threshold 3.0
 </footer>
 
 <script src="app.js"></script>

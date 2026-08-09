@@ -41,7 +41,7 @@ const EDGES = [
 ];
 
 const VW = 1200, VH = 640;
-const NN = 74, NH = 40; // node draw size
+const NN = 118, NH = 48; // node draw size
 
 // particle tracks
 const tracks = {};
@@ -110,11 +110,12 @@ function drawFlow(now) {
   for (const e of EDGES) {
     const pts = edgePoints(e);
     const a = NODES[e.from], b = NODES[e.to];
+    const on = active(a, now) || active(b, now);
     flowCtx.beginPath();
     flowCtx.moveTo(pts.s.x, pts.s.y);
     flowCtx.quadraticCurveTo(pts.c.x, pts.c.y, pts.t.x, pts.t.y);
-    flowCtx.strokeStyle = (active(a, now) || active(b, now)) ? eptsColor(pts.color, 0.9) : eptsColor(pts.color, 0.22);
-    flowCtx.lineWidth = 2.5;
+    flowCtx.strokeStyle = on ? eptsColor(pts.color, 0.85) : "rgba(120,135,160,0.4)";
+    flowCtx.lineWidth = on ? 2.6 : 1.8;
     flowCtx.stroke();
 
     // moving particles
@@ -129,11 +130,8 @@ function drawFlow(now) {
       const pos = pointOnCurve(pts.s, pts.c, pts.t, pt.p);
       flowCtx.beginPath();
       flowCtx.arc(pos.x, pos.y, pt.size, 0, Math.PI * 2);
-      flowCtx.fillStyle = eptsColor(pts.color, 0.95);
-      flowCtx.shadowColor = pts.color;
-      flowCtx.shadowBlur = 8;
+      flowCtx.fillStyle = eptsColor(pts.color, 0.9);
       flowCtx.fill();
-      flowCtx.shadowBlur = 0;
     }
   }
 
@@ -143,32 +141,35 @@ function drawFlow(now) {
     const on = active(n, now);
     const x = n.x - NN / 2, y = n.y - NH / 2;
 
+    // body
     flowCtx.beginPath();
-    flowCtx.roundRect(x, y, NN, NH, 10);
-    flowCtx.fillStyle = on ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.02)";
+    flowCtx.roundRect(x, y, NN, NH, 9);
+    flowCtx.fillStyle = on ? "#f1f5fe" : "#ffffff";
     flowCtx.fill();
-    flowCtx.strokeStyle = on ? n.color : "rgba(255,255,255,0.16)";
+    flowCtx.strokeStyle = on ? n.color : "#cbd5e1";
     flowCtx.lineWidth = on ? 2.4 : 1.2;
-    if (on) { flowCtx.shadowColor = n.color; flowCtx.shadowBlur = 18; }
     flowCtx.stroke();
-    flowCtx.shadowBlur = 0;
+
+    // left accent bar
+    flowCtx.fillStyle = on ? n.color : "#cbd5e1";
+    flowCtx.beginPath();
+    flowCtx.roundRect(x, y + 6, 4, NH - 12, 2);
+    flowCtx.fill();
 
     // status dot
     flowCtx.beginPath();
-    flowCtx.arc(n.x - NN / 2 + 10, n.y - NH / 2 + 10, 3.2, 0, Math.PI * 2);
-    flowCtx.fillStyle = on ? n.color : "#374151";
-    if (on) { flowCtx.shadowColor = n.color; flowCtx.shadowBlur = 8; }
+    flowCtx.arc(n.x - NN / 2 + 16, n.y - NH / 2 + 13, 3.5, 0, Math.PI * 2);
+    flowCtx.fillStyle = on ? n.color : "#cbd5e1";
     flowCtx.fill();
-    flowCtx.shadowBlur = 0;
 
-    flowCtx.fillStyle = on ? "#ffffff" : "rgba(220,228,245,0.85)";
-    flowCtx.font = "700 13px ui-monospace, Menlo, monospace";
+    // label + subtitle
     flowCtx.textAlign = "center";
-    flowCtx.fillText(n.label, n.x, n.y - 2);
-
-    flowCtx.fillStyle = "rgba(107,124,155,0.95)";
-    flowCtx.font = "10px ui-monospace, Menlo, monospace";
-    flowCtx.fillText(n.sub, n.x, n.y + 14);
+    flowCtx.fillStyle = "#1c2432";
+    flowCtx.font = "600 12px -apple-system, 'Segoe UI', Roboto, sans-serif";
+    flowCtx.fillText(n.label, n.x, n.y - 1);
+    flowCtx.fillStyle = "#66748f";
+    flowCtx.font = "11px -apple-system, 'Segoe UI', Roboto, sans-serif";
+    flowCtx.fillText(n.sub, n.x, n.y + 15);
   }
 }
 
@@ -214,7 +215,7 @@ function drawChart(canvas, name) {
   const range = hi - lo;
 
   // grid
-  ctx.strokeStyle = "rgba(34,48,80,0.6)";
+  ctx.strokeStyle = "#e2e8f0";
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 1; i < 4; i++) {
@@ -226,7 +227,7 @@ function drawChart(canvas, name) {
   // baseline at zero
   if (lo < 0 && hi > 0) {
     const y0 = top + (0 - lo) / range * plotH;
-    ctx.strokeStyle = "rgba(251,113,133,0.5)";
+    ctx.strokeStyle = "rgba(220,38,38,0.5)";
     ctx.beginPath(); ctx.moveTo(pad, y0); ctx.lineTo(w - pad, y0); ctx.stroke();
   }
 
@@ -241,15 +242,13 @@ function drawChart(canvas, name) {
     for (let i = 1; i < data.length; i++) ctx.lineTo(xOf(i), yOf(data[i].v));
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.8;
-    ctx.shadowColor = color; ctx.shadowBlur = 8;
     ctx.stroke();
-    ctx.shadowBlur = 0;
 
     ctx.lineTo(xOf(data.length - 1), top + plotH);
     ctx.lineTo(xOf(0), top + plotH);
     ctx.closePath();
     const g = ctx.createLinearGradient(0, top, 0, top + plotH);
-    g.addColorStop(0, eptsColor(color, 0.28));
+    g.addColorStop(0, eptsColor(color, 0.14));
     g.addColorStop(1, eptsColor(color, 0));
     ctx.fillStyle = g;
     ctx.fill();
@@ -258,16 +257,17 @@ function drawChart(canvas, name) {
   // anomaly markers
   for (const m of marks) {
     ctx.beginPath();
-    ctx.arc(xOf(m.i), yOf(m.v), 4, 0, Math.PI * 2);
-    ctx.fillStyle = "#fb7185";
-    ctx.shadowColor = "#fb7185"; ctx.shadowBlur = 10;
+    ctx.arc(xOf(m.i), yOf(m.v), 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#dc2626";
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.5;
     ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.stroke();
   }
 
   // labels
-  ctx.fillStyle = "rgba(107,124,155,0.9)";
-  ctx.font = "10px ui-monospace, Menlo, monospace";
+  ctx.fillStyle = "#8a96ad";
+  ctx.font = "10px -apple-system, 'Segoe UI', Roboto, sans-serif";
   ctx.textAlign = "right";
   ctx.fillText(hi.toFixed(1), w - pad, top - 3);
   ctx.textAlign = "left";
@@ -399,13 +399,13 @@ function connect() {
 
   es.onopen = () => {
     state.connected = true;
-    $("#conn").textContent = "● live";
+    $("#conn").textContent = "live";
     $("#conn").className = "conn up";
   };
 
   es.onerror = () => {
     state.connected = false;
-    $("#conn").textContent = "● reconnecting";
+    $("#conn").textContent = "reconnecting";
     $("#conn").className = "conn down";
   };
 
