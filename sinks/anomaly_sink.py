@@ -1,9 +1,10 @@
 import json
 import threading
+import time
 import psycopg2
 from kafka import KafkaConsumer
 from datetime import datetime
-from prometheus_client import start_http_server, Counter
+from prometheus_client import start_http_server, Counter, Histogram, Gauge
 
 # ─── CONFIG ───────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
@@ -29,6 +30,27 @@ ANOMALY_SINK_ERRORS = Counter(
     "anomaly_sink_errors_total",
     "Total errors in anomaly sink",
     ["error_type"],
+)
+
+# Precision metrics
+ANOMALY_SINK_CONSUMED_BY_METRIC = Counter(
+    "anomaly_sink_consumed_by_metric_total",
+    "Anomaly events consumed from Kafka, broken down by metric:host",
+    ["metric_name", "host"],
+)
+ANOMALY_SINK_DB_LATENCY_SECONDS = Histogram(
+    "anomaly_sink_db_latency_seconds",
+    "Time to commit a batch of anomalies to TimescaleDB (seconds)",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
+ANOMALY_SINK_BATCH_SIZE = Histogram(
+    "anomaly_sink_batch_size",
+    "Number of anomaly events per DB commit batch",
+    buckets=(1, 5, 10, 25, 50, 100),
+)
+ANOMALY_SINK_PENDING_BATCH = Gauge(
+    "anomaly_sink_pending_batch",
+    "Number of events currently waiting in the batch buffer",
 )
 
 # Start Prometheus metrics HTTP server on port 9101 (daemon thread)
@@ -90,18 +112,27 @@ def main():
         event = json.loads(message.value.decode("utf-8"))
         batch.append(event)
         ANOMALY_SINK_CONSUMED.inc()
+        ANOMALY_SINK_CONSUMED_BY_METRIC.labels(
+            metric_name=event["metric_name"], host=event["host"]
+        ).inc()
+        ANOMALY_SINK_PENDING_BATCH.set(len(batch))
         print(f"🚨 [{event['metric_name']}:{event['host']}] "
               f"value={event['value']:.4f} z={event['deviation_score']:.4f}")
 
         if len(batch) >= BATCH_SIZE:
+            start = time.perf_counter()
             try:
                 cur = conn.cursor()
                 for e in batch:
                     insert_anomaly(cur, e)
                 conn.commit()
+                db_latency = time.perf_counter() - start
+                ANOMALY_SINK_DB_LATENCY_SECONDS.observe(db_latency)
+                ANOMALY_SINK_BATCH_SIZE.observe(len(batch))
                 ANOMALY_SINK_INSERTED.inc(len(batch))
-                print(f"✅ Committed {len(batch)} anomalies to TimescaleDB")
+                print(f"✅ Committed {len(batch)} anomalies to TimescaleDB ({db_latency:.4f}s)")
                 batch = []
+                ANOMALY_SINK_PENDING_BATCH.set(0)
             except Exception as ex:
                 conn.rollback()
                 ANOMALY_SINK_ERRORS.labels(error_type=type(ex).__name__).inc()
