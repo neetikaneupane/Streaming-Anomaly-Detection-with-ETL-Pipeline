@@ -2,8 +2,9 @@ import faust
 import math
 import json
 import threading
+import time
 from datetime import datetime, timezone
-from prometheus_client import start_http_server, Counter
+from prometheus_client import start_http_server, Counter, Histogram, Gauge
 
 # ─── CONFIG ───────────────────────────────────────
 KAFKA_BOOTSTRAP = "kafka:29092"
@@ -45,6 +46,49 @@ FAUST_ERRORS = Counter(
     ["error_type"],
 )
 
+# Precision metrics
+FAUST_PROCESSING_DURATION_SECONDS = Histogram(
+    "faust_processing_duration_seconds",
+    "Time spent processing each event (seconds)",
+    ["metric_name", "host"],
+    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5),
+)
+FAUST_ZSCORE_DISTRIBUTION = Histogram(
+    "faust_zscore_distribution",
+    "Distribution of z-scores for all evaluated events",
+    ["metric_name", "host"],
+    buckets=(-10.0, -5.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 5.0, 10.0),
+)
+FAUST_ANOMALY_BY_DIRECTION = Counter(
+    "faust_anomaly_by_direction_total",
+    "Anomalies split by deviation direction (positive/negative z-score)",
+    ["metric_name", "host", "direction"],
+)
+FAUST_BASELINE_MEAN = Gauge(
+    "faust_baseline_mean",
+    "Current weighted baseline mean per metric:host",
+    ["metric_name", "host"],
+)
+FAUST_BASELINE_STDDEV = Gauge(
+    "faust_baseline_stddev",
+    "Current weighted baseline stddev per metric:host",
+    ["metric_name", "host"],
+)
+FAUST_BASELINE_WINDOWS_USED = Gauge(
+    "faust_baseline_windows_used",
+    "Number of windows in current baseline per metric:host",
+    ["metric_name", "host"],
+)
+FAUST_STATE_KEYS = Gauge(
+    "faust_state_keys",
+    "Number of metric:host keys tracked in Faust state table",
+)
+FAUST_WINDOW_ROLLOVERS = Counter(
+    "faust_window_rollovers_total",
+    "Times a metric:host window rolled over to a new window",
+    ["metric_name", "host"],
+)
+
 # Start Prometheus metrics HTTP server on port 9090 (daemon thread)
 threading.Thread(target=start_http_server, args=(PROMETHEUS_PORT,), daemon=True).start()
 
@@ -63,6 +107,9 @@ normal_topic      = app.topic("normal-events")
 
 # ─── STATE TABLE (plain dicts — fully JSON serializable) ──
 metric_states = app.Table("metric-states", default=dict, partitions=3)
+
+# Track unique metric:host keys seen for precise state cardinality
+_seen_state_keys = set()
 
 # ─── HELPERS ──────────────────────────────────────
 def get_window_start(event_ts: str) -> str:
@@ -122,6 +169,7 @@ def get_baseline(state: dict) -> dict | None:
 @app.agent(raw_metrics_topic)
 async def process_metrics(stream):
     async for event in stream:
+        start = time.perf_counter()
         try:
             now = datetime.now(timezone.utc)
 
@@ -136,18 +184,37 @@ async def process_metrics(stream):
             window_start = get_window_start(event["event_timestamp"])
             window_end   = get_window_end(window_start)
 
+            # track unique state keys for precise cardinality
+            if metric_key not in _seen_state_keys:
+                _seen_state_keys.add(metric_key)
+                FAUST_STATE_KEYS.set(len(_seen_state_keys))
+
             # count every processed event
             FAUST_EVENTS_PROCESSED.labels(topic="raw-metrics", metric_name=metric_name, host=host).inc()
             if late:
                 FAUST_LATE_ARRIVALS.labels(metric_name=metric_name, host=host).inc()
+
+            # detect window rollover for precision state tracking
+            prior_state = dict(metric_states[metric_key])
+            prior_window = prior_state.get("current_window_start")
 
             # get state, update, persist
             state = dict(metric_states[metric_key])
             state = update_state(state, value, window_start)
             metric_states[metric_key] = state
 
+            # count window rollovers (new window started for this metric:host)
+            if prior_window and prior_window != state.get("current_window_start"):
+                FAUST_WINDOW_ROLLOVERS.labels(metric_name=metric_name, host=host).inc()
+
             baseline = get_baseline(state)
             history_len = len(state.get("window_history", []))
+
+            # expose current baseline as gauges for precision querying
+            if baseline is not None:
+                FAUST_BASELINE_MEAN.labels(metric_name=metric_name, host=host).set(baseline["mean"])
+                FAUST_BASELINE_STDDEV.labels(metric_name=metric_name, host=host).set(baseline["stddev"])
+                FAUST_BASELINE_WINDOWS_USED.labels(metric_name=metric_name, host=host).set(baseline["windows_used"])
 
             if baseline is None:
                 FAUST_WARMUP_EVENTS.labels(metric_name=metric_name, host=host).inc()
@@ -160,8 +227,13 @@ async def process_metrics(stream):
             threshold = round(baseline["mean"] + ANOMALY_ZSCORE_THRESHOLD * baseline["stddev"], 4)
             is_anomaly = abs(zscore) > ANOMALY_ZSCORE_THRESHOLD
 
+            # record z-score distribution for precision analysis
+            FAUST_ZSCORE_DISTRIBUTION.labels(metric_name=metric_name, host=host).observe(zscore)
+
             if is_anomaly:
+                direction = "positive" if zscore > 0 else "negative"
                 FAUST_ANOMALIES_DETECTED.labels(metric_name=metric_name, host=host).inc()
+                FAUST_ANOMALY_BY_DIRECTION.labels(metric_name=metric_name, host=host, direction=direction).inc()
                 enriched = {
                     **event,
                     "baseline_mean":   baseline["mean"],
@@ -183,6 +255,13 @@ async def process_metrics(stream):
         except Exception as ex:
             FAUST_ERRORS.labels(error_type=type(ex).__name__).inc()
             print(f"[ERROR] processing event: {ex}")
+        finally:
+            # record processing duration for every event (success or error)
+            duration = time.perf_counter() - start
+            try:
+                FAUST_PROCESSING_DURATION_SECONDS.labels(metric_name=metric_name, host=host).observe(duration)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     app.main()
