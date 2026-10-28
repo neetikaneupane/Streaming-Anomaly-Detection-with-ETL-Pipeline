@@ -16,7 +16,6 @@ import queue
 import threading
 import time
 import urllib.request
-import warnings
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,9 +23,6 @@ from pathlib import Path
 import boto3
 import psycopg2
 from kafka import KafkaConsumer, TopicPartition
-
-warnings.filterwarnings("ignore",
-                        message="value_deserializer does not implement")
 
 # ─── CONFIG ────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
@@ -80,7 +76,6 @@ def live_consumer_thread():
                     enable_auto_commit=False,
                     auto_offset_reset="latest",
                     consumer_timeout_ms=400,
-                    value_deserializer=lambda b: json.loads(b.decode("utf-8")),
                 )
             records = consumer.poll(timeout_ms=500, max_records=200)
             if not records:
@@ -88,9 +83,9 @@ def live_consumer_thread():
             with state_lock:
                 for tps, recs in records.items():
                     for rec in recs:
+                        v = json.loads(rec.value.decode("utf-8"))
                         if rec.topic == "raw-metrics":
                             window["raw"] += 1
-                            v = rec.value
                             bcast({"type": "event", "kind": "raw",
                                    "metric": v.get("metric_name"),
                                    "host": v.get("host"),
@@ -100,7 +95,6 @@ def live_consumer_thread():
                             window["normal"] += 1
                         elif rec.topic == "anomalies":
                             window["anomaly"] += 1
-                            v = rec.value
                             bcast({"type": "event", "kind": "anomaly",
                                    "metric": v.get("metric_name"),
                                    "host": v.get("host"),

@@ -49,7 +49,6 @@ def main():
         bootstrap_servers=KAFKA_BOOTSTRAP,
         group_id="normal-sink",
         auto_offset_reset="earliest",
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
     )
 
     batch = []
@@ -57,7 +56,7 @@ def main():
 
     print("Consuming normal-events topic...")
     for message in consumer:
-        event = message.value
+        event = json.loads(message.value.decode("utf-8"))
         batch.append(event)
 
         now = datetime.now(timezone.utc)

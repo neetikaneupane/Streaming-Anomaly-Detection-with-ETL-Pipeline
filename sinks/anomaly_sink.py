@@ -58,7 +58,6 @@ def main():
         bootstrap_servers=KAFKA_BOOTSTRAP,
         group_id="anomaly-sink",
         auto_offset_reset="earliest",
-        value_deserializer=lambda b: json.loads(b.decode("utf-8")),
     )
 
     print("Consuming anomalies topic...")
@@ -66,7 +65,7 @@ def main():
     BATCH_SIZE = 10
 
     for message in consumer:
-        event = message.value
+        event = json.loads(message.value.decode("utf-8"))
         batch.append(event)
         print(f"🚨 [{event['metric_name']}:{event['host']}] "
               f"value={event['value']:.4f} z={event['deviation_score']:.4f}")

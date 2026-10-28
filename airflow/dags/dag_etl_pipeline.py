@@ -61,7 +61,7 @@ def extract_from_minio(**context):
 
     # convert timestamp column to string BEFORE JSON serialization
     if "event_timestamp" in combined.columns:
-     combined["event_timestamp"] = combined["event_timestamp"].astype(str)
+        combined["event_timestamp"] = combined["event_timestamp"].astype(str)
 
     context["ti"].xcom_push(key="raw_records", value=combined.to_json())
     return len(combined)

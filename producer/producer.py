@@ -95,8 +95,6 @@ def get_event_timestamp(now: datetime) -> tuple[str, bool]:
 def create_producer() -> KafkaProducer:
     return KafkaProducer(
         bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-        key_serializer=lambda k: k.encode("utf-8"),
         acks="all",              # wait for broker ack
         retries=3,
         linger_ms=10,            # batch for 10ms before sending
@@ -139,7 +137,11 @@ def main():
                 # so same metric+host always goes to same partition
                 key = f"{metric_name}:{host}"
 
-                producer.send(TOPIC, key=key, value=event)
+                producer.send(
+                    TOPIC,
+                    key=key.encode("utf-8"),
+                    value=json.dumps(event).encode("utf-8"),
+                )
                 event_count += 1
 
                 # console log
