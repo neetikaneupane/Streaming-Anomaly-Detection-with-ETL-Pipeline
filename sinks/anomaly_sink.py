@@ -1,7 +1,9 @@
 import json
+import threading
 import psycopg2
 from kafka import KafkaConsumer
 from datetime import datetime
+from prometheus_client import start_http_server, Counter
 
 # ─── CONFIG ───────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
@@ -12,6 +14,26 @@ TIMESCALE_CONN = {
     "user": "pipeline_user",
     "password": "pipeline_pass",
 }
+PROMETHEUS_PORT = 9101
+
+# ─── PROMETHEUS METRICS ───────────────────────────────────────
+ANOMALY_SINK_CONSUMED = Counter(
+    "anomaly_sink_consumed_total",
+    "Total anomaly events consumed from Kafka",
+)
+ANOMALY_SINK_INSERTED = Counter(
+    "anomaly_sink_inserted_total",
+    "Total anomaly events inserted into TimescaleDB",
+)
+ANOMALY_SINK_ERRORS = Counter(
+    "anomaly_sink_errors_total",
+    "Total errors in anomaly sink",
+    ["error_type"],
+)
+
+# Start Prometheus metrics HTTP server on port 9101 (daemon thread)
+threading.Thread(target=start_http_server, args=(PROMETHEUS_PORT,), daemon=True).start()
+
 
 def get_db():
     return psycopg2.connect(**TIMESCALE_CONN)
@@ -67,6 +89,7 @@ def main():
     for message in consumer:
         event = json.loads(message.value.decode("utf-8"))
         batch.append(event)
+        ANOMALY_SINK_CONSUMED.inc()
         print(f"🚨 [{event['metric_name']}:{event['host']}] "
               f"value={event['value']:.4f} z={event['deviation_score']:.4f}")
 
@@ -76,10 +99,12 @@ def main():
                 for e in batch:
                     insert_anomaly(cur, e)
                 conn.commit()
+                ANOMALY_SINK_INSERTED.inc(len(batch))
                 print(f"✅ Committed {len(batch)} anomalies to TimescaleDB")
                 batch = []
             except Exception as ex:
                 conn.rollback()
+                ANOMALY_SINK_ERRORS.labels(error_type=type(ex).__name__).inc()
                 print(f"[ERROR] DB insert failed: {ex}")
 
 if __name__ == "__main__":
