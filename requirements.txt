@@ -12,5 +12,8 @@ boto3==1.33.13
 pandas==2.0.3
 pyarrow==14.0.2
 
+# Prometheus client (metrics endpoints for sinks + dashboard)
+prometheus_client==0.20.0
+
 # Airflow (only needed if running airflow locally outside docker — usually NOT needed)
 # apache-airflow==2.8.1
