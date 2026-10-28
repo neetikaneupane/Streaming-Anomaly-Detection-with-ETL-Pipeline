@@ -67,6 +67,26 @@ DASHBOARD_API_ERRORS = Counter(
     ["source"],
 )
 
+# Precision metrics
+DASHBOARD_SNAPSHOT_DURATION_SECONDS = Histogram(
+    "dashboard_snapshot_duration_seconds",
+    "Time to collect and broadcast a full state snapshot (seconds)",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0),
+)
+DASHBOARD_EVENT_END_TO_END_LATENCY_SECONDS = Histogram(
+    "dashboard_event_end_to_end_latency_seconds",
+    "Time from event creation (event_timestamp) to dashboard broadcast (seconds)",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
+)
+DASHBOARD_SSE_CONNECTS = Counter(
+    "dashboard_sse_connects_total",
+    "Total SSE client connections",
+)
+DASHBOARD_SSE_DISCONNECTS = Counter(
+    "dashboard_sse_disconnects_total",
+    "Total SSE client disconnections",
+)
+
 # ─── SHARED STATE ──────────────────────────────────────────────────
 clients = set()
 clients_lock = threading.Lock()
@@ -106,6 +126,7 @@ def live_consumer_thread():
                     for rec in recs:
                         v = json.loads(rec.value.decode("utf-8"))
                         kind = "raw"
+                        event_ts_str = v.get("event_timestamp")
                         if rec.topic == "raw-metrics":
                             window["raw"] += 1
                             bcast({"type": "event", "kind": "raw",
@@ -126,6 +147,22 @@ def live_consumer_thread():
                                    "z": v.get("deviation_score"),
                                    "ts": v.get("event_timestamp")})
                         DASHBOARD_EVENTS_BROADCAST.labels(kind=kind).inc()
+
+                        # end-to-end latency: event creation → dashboard broadcast
+                        if event_ts_str:
+                            try:
+                                event_dt = datetime.fromisoformat(
+                                    event_ts_str.replace("Z", "+00:00")
+                                )
+                                latency = (
+                                    datetime.now(timezone.utc) - event_dt
+                                ).total_seconds()
+                                if latency >= 0:
+                                    DASHBOARD_EVENT_END_TO_END_LATENCY_SECONDS.observe(
+                                        latency
+                                    )
+                            except Exception:
+                                pass
         except Exception as ex:
             DASHBOARD_API_ERRORS.labels(source="kafka").inc()
             bcast({"type": "log", "msg": f"live consumer: {ex}"})
@@ -247,6 +284,7 @@ def snapshot_thread():
     """Periodically compose a full state snapshot and broadcast it."""
     while True:
         time.sleep(SNAPSHOT_INTERVAL)
+        start = time.perf_counter()
         try:
             with state_lock:
                 raw, normal, anomaly = window["raw"], window["normal"], window["anomaly"]
@@ -259,6 +297,8 @@ def snapshot_thread():
             airflow = airflow_dag_states()
 
             DASHBOARD_SNAPSHOTS.inc()
+            snapshot_duration = time.perf_counter() - start
+            DASHBOARD_SNAPSHOT_DURATION_SECONDS.observe(snapshot_duration)
             bcast({
                 "type": "snapshot",
                 "ts": datetime.now(timezone.utc).isoformat(),
@@ -336,6 +376,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
 
         q = queue.Queue(maxsize=200)
+        DASHBOARD_SSE_CONNECTS.inc()
         with clients_lock:
             clients.add(q)
         try:
@@ -350,6 +391,7 @@ class Handler(SimpleHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
+            DASHBOARD_SSE_DISCONNECTS.inc()
             with clients_lock:
                 clients.discard(q)
 
