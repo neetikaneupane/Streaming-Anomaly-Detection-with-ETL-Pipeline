@@ -3,3 +3,4 @@ faust-streaming-rocksdb==0.9.3
 aiokafka==0.10.0
 kafka-python==2.0.2
 psycopg2-binary==2.9.9
+prometheus_client==0.20.0
