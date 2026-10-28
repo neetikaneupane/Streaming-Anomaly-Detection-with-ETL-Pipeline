@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import boto3
 import pandas as pd
 import pyarrow as pa
@@ -7,7 +8,7 @@ import pyarrow.parquet as pq
 import io
 from kafka import KafkaConsumer
 from datetime import datetime, timezone
-from prometheus_client import start_http_server, Counter
+from prometheus_client import start_http_server, Counter, Histogram, Gauge
 
 # ─── CONFIG ───────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
@@ -36,6 +37,27 @@ NORMAL_SINK_ERRORS = Counter(
     "normal_sink_errors_total",
     "Total errors in normal sink",
     ["error_type"],
+)
+
+# Precision metrics
+NORMAL_SINK_CONSUMED_BY_METRIC = Counter(
+    "normal_sink_consumed_by_metric_total",
+    "Normal events consumed from Kafka, broken down by metric:host",
+    ["metric_name", "host"],
+)
+NORMAL_SINK_PARQUET_LATENCY_SECONDS = Histogram(
+    "normal_sink_parquet_latency_seconds",
+    "Time to write a Parquet batch to MinIO (seconds)",
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0),
+)
+NORMAL_SINK_BATCH_SIZE = Histogram(
+    "normal_sink_batch_size",
+    "Number of normal events per Parquet write batch",
+    buckets=(1, 10, 25, 50, 100, 250, 500),
+)
+NORMAL_SINK_PENDING_BATCH = Gauge(
+    "normal_sink_pending_batch",
+    "Number of events currently waiting in the batch buffer",
 )
 
 # Start Prometheus metrics HTTP server on port 9102 (daemon thread)
@@ -84,17 +106,27 @@ def main():
         event = json.loads(message.value.decode("utf-8"))
         batch.append(event)
         NORMAL_SINK_CONSUMED.inc()
+        NORMAL_SINK_CONSUMED_BY_METRIC.labels(
+            metric_name=event["metric_name"], host=event["host"]
+        ).inc()
+        NORMAL_SINK_PENDING_BATCH.set(len(batch))
 
         now = datetime.now(timezone.utc)
         elapsed = (now - last_flush).total_seconds()
 
         if len(batch) >= BATCH_SIZE or elapsed >= FLUSH_INTERVAL:
+            start = time.perf_counter()
             try:
                 write_parquet(s3, batch)
+                write_latency = time.perf_counter() - start
+                NORMAL_SINK_PARQUET_LATENCY_SECONDS.observe(write_latency)
+                NORMAL_SINK_BATCH_SIZE.observe(len(batch))
                 NORMAL_SINK_PARQUET_WRITES.inc()
                 NORMAL_SINK_RECORDS_WRITTEN.inc(len(batch))
+                print(f"✅ Wrote {len(batch)} records to MinIO Parquet ({write_latency:.4f}s)")
                 batch = []
                 last_flush = now
+                NORMAL_SINK_PENDING_BATCH.set(0)
             except Exception as ex:
                 NORMAL_SINK_ERRORS.labels(error_type=type(ex).__name__).inc()
                 print(f"[ERROR] Parquet write failed: {ex}")
