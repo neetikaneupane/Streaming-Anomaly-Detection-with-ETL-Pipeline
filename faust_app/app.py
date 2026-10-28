@@ -1,7 +1,9 @@
 import faust
 import math
 import json
+import threading
 from datetime import datetime, timezone
+from prometheus_client import start_http_server, Counter
 
 # ─── CONFIG ───────────────────────────────────────
 KAFKA_BOOTSTRAP = "kafka:29092"
@@ -9,6 +11,42 @@ WINDOW_SIZE_S = 60
 WINDOW_GRACE_S = 30
 STATE_WINDOW_COUNT = 10
 ANOMALY_ZSCORE_THRESHOLD = 3.0
+PROMETHEUS_PORT = 9090
+
+# ─── PROMETHEUS METRICS ───────────────────────────────────────
+FAUST_EVENTS_PROCESSED = Counter(
+    "faust_events_processed_total",
+    "Total events processed by the Faust worker",
+    ["topic", "metric_name", "host"],
+)
+FAUST_ANOMALIES_DETECTED = Counter(
+    "faust_anomalies_detected_total",
+    "Total anomalies detected",
+    ["metric_name", "host"],
+)
+FAUST_NORMAL_EVENTS = Counter(
+    "faust_normal_events_total",
+    "Total normal events routed to normal-events topic",
+    ["metric_name", "host"],
+)
+FAUST_WARMUP_EVENTS = Counter(
+    "faust_warmup_events_total",
+    "Total events during warmup (insufficient baseline history)",
+    ["metric_name", "host"],
+)
+FAUST_LATE_ARRIVALS = Counter(
+    "faust_late_arrivals_total",
+    "Total late-arriving events",
+    ["metric_name", "host"],
+)
+FAUST_ERRORS = Counter(
+    "faust_processing_errors_total",
+    "Total processing errors",
+    ["error_type"],
+)
+
+# Start Prometheus metrics HTTP server on port 9090 (daemon thread)
+threading.Thread(target=start_http_server, args=(PROMETHEUS_PORT,), daemon=True).start()
 
 app = faust.App(
     "anomaly-detector",
@@ -84,54 +122,67 @@ def get_baseline(state: dict) -> dict | None:
 @app.agent(raw_metrics_topic)
 async def process_metrics(stream):
     async for event in stream:
-        now = datetime.now(timezone.utc)
+        try:
+            now = datetime.now(timezone.utc)
 
-        if not isinstance(event, dict):
-            event = json.loads(event)
+            if not isinstance(event, dict):
+                event = json.loads(event)
 
-        metric_name = event["metric_name"]
-        host        = event["host"]
-        value       = float(event["value"])
-        metric_key  = f"{metric_name}:{host}"
-        late        = is_late(event, now)
-        window_start = get_window_start(event["event_timestamp"])
-        window_end   = get_window_end(window_start)
+            metric_name = event["metric_name"]
+            host        = event["host"]
+            value       = float(event["value"])
+            metric_key  = f"{metric_name}:{host}"
+            late        = is_late(event, now)
+            window_start = get_window_start(event["event_timestamp"])
+            window_end   = get_window_end(window_start)
 
-        # get state, update, persist
-        state = dict(metric_states[metric_key])
-        state = update_state(state, value, window_start)
-        metric_states[metric_key] = state
+            # count every processed event
+            FAUST_EVENTS_PROCESSED.labels(topic="raw-metrics", metric_name=metric_name, host=host).inc()
+            if late:
+                FAUST_LATE_ARRIVALS.labels(metric_name=metric_name, host=host).inc()
 
-        baseline = get_baseline(state)
-        history_len = len(state.get("window_history", []))
+            # get state, update, persist
+            state = dict(metric_states[metric_key])
+            state = update_state(state, value, window_start)
+            metric_states[metric_key] = state
 
-        if baseline is None:
-            print(f"[WARMUP] {metric_key:<30} value={value:>10.4f} ({history_len}/{STATE_WINDOW_COUNT} windows)")
-            await normal_topic.send(key=metric_key, value=event)
-            continue
+            baseline = get_baseline(state)
+            history_len = len(state.get("window_history", []))
 
-        zscore    = round((value - baseline["mean"]) / baseline["stddev"], 4)
-        threshold = round(baseline["mean"] + ANOMALY_ZSCORE_THRESHOLD * baseline["stddev"], 4)
-        is_anomaly = abs(zscore) > ANOMALY_ZSCORE_THRESHOLD
+            if baseline is None:
+                FAUST_WARMUP_EVENTS.labels(metric_name=metric_name, host=host).inc()
+                print(f"[WARMUP] {metric_key:<30} value={value:>10.4f} ({history_len}/{STATE_WINDOW_COUNT} windows)")
+                await normal_topic.send(key=metric_key, value=event)
+                FAUST_NORMAL_EVENTS.labels(metric_name=metric_name, host=host).inc()
+                continue
 
-        if is_anomaly:
-            enriched = {
-                **event,
-                "baseline_mean":   baseline["mean"],
-                "baseline_stddev": baseline["stddev"],
-                "deviation_score": zscore,
-                "threshold":       threshold,
-                "window_start":    window_start,
-                "window_end":      window_end,
-                "windows_used":    baseline["windows_used"],
-                "is_late_arrival": late,
-                "detected_at":     now.isoformat(),
-            }
-            await anomalies_topic.send(key=metric_key, value=enriched)
-            print(f"🚨 ANOMALY  {metric_key:<30} value={value:>10.4f}  baseline={baseline['mean']:>10.4f} ± {baseline['stddev']:.4f}  z={zscore:>7.4f} {'⏰ LATE' if late else ''}")
-        else:
-            await normal_topic.send(key=metric_key, value=event)
-            print(f"✅ normal   {metric_key:<30} value={value:>10.4f}  baseline={baseline['mean']:>10.4f} ± {baseline['stddev']:.4f}  z={zscore:>7.4f}")
+            zscore    = round((value - baseline["mean"]) / baseline["stddev"], 4)
+            threshold = round(baseline["mean"] + ANOMALY_ZSCORE_THRESHOLD * baseline["stddev"], 4)
+            is_anomaly = abs(zscore) > ANOMALY_ZSCORE_THRESHOLD
+
+            if is_anomaly:
+                FAUST_ANOMALIES_DETECTED.labels(metric_name=metric_name, host=host).inc()
+                enriched = {
+                    **event,
+                    "baseline_mean":   baseline["mean"],
+                    "baseline_stddev": baseline["stddev"],
+                    "deviation_score": zscore,
+                    "threshold":       threshold,
+                    "window_start":    window_start,
+                    "window_end":      window_end,
+                    "windows_used":    baseline["windows_used"],
+                    "is_late_arrival": late,
+                    "detected_at":     now.isoformat(),
+                }
+                await anomalies_topic.send(key=metric_key, value=enriched)
+                print(f"🚨 ANOMALY  {metric_key:<30} value={value:>10.4f}  baseline={baseline['mean']:>10.4f} ± {baseline['stddev']:.4f}  z={zscore:>7.4f} {'⏰ LATE' if late else ''}")
+            else:
+                FAUST_NORMAL_EVENTS.labels(metric_name=metric_name, host=host).inc()
+                await normal_topic.send(key=metric_key, value=event)
+                print(f"✅ normal   {metric_key:<30} value={value:>10.4f}  baseline={baseline['mean']:>10.4f} ± {baseline['stddev']:.4f}  z={zscore:>7.4f}")
+        except Exception as ex:
+            FAUST_ERRORS.labels(error_type=type(ex).__name__).inc()
+            print(f"[ERROR] processing event: {ex}")
 
 if __name__ == "__main__":
     app.main()
