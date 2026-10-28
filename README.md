@@ -130,6 +130,10 @@ It pulls live data from:
 | MinIO Console| 9001 | http://localhost:9001                          |
 | Kafka broker | 9092 | `localhost:9092`                               |
 | TimescaleDB  | 5433 | `pipeline_user` / `pipeline_pass`, db `metrics_db` |
+| Faust metrics| 9090 | `http://localhost:9090/metrics` (Prometheus)   |
+| Anomaly sink | 9101 | `http://localhost:9101/metrics` (Prometheus)   |
+| Normal sink  | 9102 | `http://localhost:9102/metrics` (Prometheus)   |
+| Dashboard    | 8082 | `http://localhost:8082/metrics` (Prometheus)   |
 
 > **Note:** TimescaleDB is exposed on host port **5433** (not 5432) to avoid conflicting with a local Homebrew PostgreSQL. Inside the Docker network it is reached as `timescaledb:5432`. The Airflow DAGs and the Faust worker already use the internal hostname; only host-side scripts (e.g. `sinks/anomaly_sink.py`) connect via `localhost:5433`.
 
@@ -173,3 +177,47 @@ It pulls live data from:
 
 - Anomaly detection: 60s windows, 30s grace for late arrivals, baseline over last 10 windows, z-score threshold `3.0` — all configurable in `faust_app/app.py`.
 - The Faust worker persists its state to the `rocksdb_data` volume (`anomaly-detector-data`), so it recovers window history across restarts.
+
+## Prometheus Metrics
+
+Each pipeline component exposes a Prometheus text-format metrics endpoint:
+
+| Component | Endpoint | Port |
+|-----------|----------|------|
+| Faust worker | `http://localhost:9090/metrics` | 9090 |
+| Anomaly sink | `http://localhost:9101/metrics` | 9101 |
+| Normal sink | `http://localhost:9102/metrics` | 9102 |
+| Dashboard | `http://localhost:8082/metrics` | 8082 |
+
+### Faust worker metrics (`faust_events_processed_total`, etc.)
+
+- `faust_events_processed_total{topic,metric_name,host}` — total events processed
+- `faust_anomalies_detected_total{metric_name,host}` — anomalies detected
+- `faust_normal_events_total{metric_name,host}` — normal events routed
+- `faust_warmup_events_total{metric_name,host}` — events during warmup (no baseline yet)
+- `faust_late_arrivals_total{metric_name,host}` — late-arriving events
+- `faust_processing_errors_total{error_type}` — processing errors
+
+### Sink metrics
+
+- `anomaly_sink_consumed_total` / `anomaly_sink_inserted_total` / `anomaly_sink_errors_total{error_type}`
+- `normal_sink_consumed_total` / `normal_sink_parquet_writes_total` / `normal_sink_records_written_total` / `normal_sink_errors_total{error_type}`
+
+### Dashboard metrics
+
+- `dashboard_snapshots_total` — state snapshots broadcast
+- `dashboard_events_broadcast_total{kind}` — live events broadcast (kind: raw/normal/anomaly)
+- `dashboard_sse_clients` — connected SSE clients (gauge)
+- `dashboard_api_errors_total{source}` — errors from kafka/timescaledb/minio/airflow
+
+### Scraping with Prometheus
+
+A scrape config is provided at `monitoring/prometheus.yml`. Run Prometheus locally:
+
+```bash
+prometheus --config.file=monitoring/prometheus.yml
+```
+
+Then open the Prometheus UI at http://localhost:9090 and query any of the counters above.
+
+> **Note:** The Faust worker runs inside Docker (port 9090 exposed via `docker-compose.yml`). The sinks and dashboard run locally on your Mac, so their metrics endpoints are available at `localhost:9101`, `localhost:9102`, and `localhost:8082` respectively when those processes are running.
