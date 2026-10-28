@@ -189,26 +189,64 @@ Each pipeline component exposes a Prometheus text-format metrics endpoint:
 | Normal sink | `http://localhost:9102/metrics` | 9102 |
 | Dashboard | `http://localhost:8082/metrics` | 8082 |
 
-### Faust worker metrics (`faust_events_processed_total`, etc.)
+### Faust worker metrics
 
+**Counters:**
 - `faust_events_processed_total{topic,metric_name,host}` — total events processed
 - `faust_anomalies_detected_total{metric_name,host}` — anomalies detected
 - `faust_normal_events_total{metric_name,host}` — normal events routed
 - `faust_warmup_events_total{metric_name,host}` — events during warmup (no baseline yet)
 - `faust_late_arrivals_total{metric_name,host}` — late-arriving events
 - `faust_processing_errors_total{error_type}` — processing errors
+- `faust_anomaly_by_direction_total{metric_name,host,direction}` — anomalies by direction (positive/negative z-score)
+- `faust_window_rollovers_total{metric_name,host}` — window rollover events
+
+**Histograms (distributions):**
+- `faust_processing_duration_seconds{metric_name,host}` — per-event processing time
+- `faust_zscore_distribution{metric_name,host}` — z-score value distribution
+
+**Gauges:**
+- `faust_baseline_mean{metric_name,host}` — current weighted baseline mean
+- `faust_baseline_stddev{metric_name,host}` — current weighted baseline stddev
+- `faust_baseline_windows_used{metric_name,host}` — windows in current baseline
+- `faust_state_keys` — number of metric:host keys in state
 
 ### Sink metrics
 
-- `anomaly_sink_consumed_total` / `anomaly_sink_inserted_total` / `anomaly_sink_errors_total{error_type}`
-- `normal_sink_consumed_total` / `normal_sink_parquet_writes_total` / `normal_sink_records_written_total` / `normal_sink_errors_total{error_type}`
+**Anomaly sink (`anomaly_sink`):**
+- `anomaly_sink_consumed_total` — total consumed
+- `anomaly_sink_consumed_by_metric_total{metric_name,host}` — consumed by metric:host
+- `anomaly_sink_inserted_total` — total inserted into TimescaleDB
+- `anomaly_sink_db_latency_seconds` — DB commit latency per batch (histogram)
+- `anomaly_sink_batch_size` — events per DB commit batch (histogram)
+- `anomaly_sink_pending_batch` — events waiting in buffer (gauge)
+- `anomaly_sink_errors_total{error_type}` — errors
+
+**Normal sink (`normal_sink`):**
+- `normal_sink_consumed_total` — total consumed
+- `normal_sink_consumed_by_metric_total{metric_name,host}` — consumed by metric:host
+- `normal_sink_parquet_writes_total` — Parquet files written
+- `normal_sink_records_written_total` — total records written
+- `normal_sink_parquet_latency_seconds` — Parquet write latency per batch (histogram)
+- `normal_sink_batch_size` — events per Parquet write batch (histogram)
+- `normal_sink_pending_batch` — events waiting in buffer (gauge)
+- `normal_sink_errors_total{error_type}` — errors
 
 ### Dashboard metrics
 
+**Counters:**
 - `dashboard_snapshots_total` — state snapshots broadcast
 - `dashboard_events_broadcast_total{kind}` — live events broadcast (kind: raw/normal/anomaly)
-- `dashboard_sse_clients` — connected SSE clients (gauge)
+- `dashboard_sse_connects_total` — SSE client connections
+- `dashboard_sse_disconnects_total` — SSE client disconnections
 - `dashboard_api_errors_total{source}` — errors from kafka/timescaledb/minio/airflow
+
+**Histograms (distributions):**
+- `dashboard_snapshot_duration_seconds` — time to collect a full snapshot
+- `dashboard_event_end_to_end_latency_seconds` — event creation → broadcast latency
+
+**Gauges:**
+- `dashboard_sse_clients` — connected SSE clients
 
 ### Scraping with Prometheus
 
