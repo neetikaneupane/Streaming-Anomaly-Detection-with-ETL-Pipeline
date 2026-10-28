@@ -23,6 +23,7 @@ from pathlib import Path
 import boto3
 import psycopg2
 from kafka import KafkaConsumer, TopicPartition
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
 # ─── CONFIG ────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
@@ -45,6 +46,26 @@ AIRFLOW_AUTH = ("admin", "admin")
 PORT = 8082
 STATIC_DIR = Path(__file__).parent / "static"
 SNAPSHOT_INTERVAL = 2.0
+
+# ─── PROMETHEUS METRICS ───────────────────────────────────────
+DASHBOARD_SNAPSHOTS = Counter(
+    "dashboard_snapshots_total",
+    "Total state snapshots broadcast to SSE clients",
+)
+DASHBOARD_EVENTS_BROADCAST = Counter(
+    "dashboard_events_broadcast_total",
+    "Total live events broadcast to SSE clients",
+    ["kind"],
+)
+DASHBOARD_CLIENTS = Gauge(
+    "dashboard_sse_clients",
+    "Number of connected SSE clients",
+)
+DASHBOARD_API_ERRORS = Counter(
+    "dashboard_api_errors_total",
+    "Total errors fetching from Kafka / TimescaleDB / MinIO / Airflow",
+    ["source"],
+)
 
 # ─── SHARED STATE ──────────────────────────────────────────────────
 clients = set()
@@ -84,6 +105,7 @@ def live_consumer_thread():
                 for tps, recs in records.items():
                     for rec in recs:
                         v = json.loads(rec.value.decode("utf-8"))
+                        kind = "raw"
                         if rec.topic == "raw-metrics":
                             window["raw"] += 1
                             bcast({"type": "event", "kind": "raw",
@@ -93,15 +115,19 @@ def live_consumer_thread():
                                    "ts": v.get("event_timestamp")})
                         elif rec.topic == "normal-events":
                             window["normal"] += 1
+                            kind = "normal"
                         elif rec.topic == "anomalies":
                             window["anomaly"] += 1
+                            kind = "anomaly"
                             bcast({"type": "event", "kind": "anomaly",
                                    "metric": v.get("metric_name"),
                                    "host": v.get("host"),
                                    "value": v.get("value"),
                                    "z": v.get("deviation_score"),
                                    "ts": v.get("event_timestamp")})
+                        DASHBOARD_EVENTS_BROADCAST.labels(kind=kind).inc()
         except Exception as ex:
+            DASHBOARD_API_ERRORS.labels(source="kafka").inc()
             bcast({"type": "log", "msg": f"live consumer: {ex}"})
             time.sleep(2)
 
@@ -124,6 +150,7 @@ def kafka_offsets():
         consumer.close()
         return offsets
     except Exception as ex:
+        DASHBOARD_API_ERRORS.labels(source="kafka").inc()
         return {"error": str(ex)}
 
 
@@ -146,6 +173,7 @@ def kafka_group_lag(offsets):
         admin.close()
         return lag
     except Exception as ex:
+        DASHBOARD_API_ERRORS.labels(source="kafka").inc()
         return {"error": str(ex)}
 
 
@@ -168,6 +196,7 @@ def db_counts():
         conn.close()
         return counts, recent
     except Exception as ex:
+        DASHBOARD_API_ERRORS.labels(source="timescaledb").inc()
         return {"error": str(ex)}, []
 
 
@@ -191,6 +220,7 @@ def minio_counts():
             out[bucket] = {"count": n, "truncated": truncated}
         return out
     except Exception as ex:
+        DASHBOARD_API_ERRORS.labels(source="minio").inc()
         return {"error": str(ex)}
 
 
@@ -208,6 +238,7 @@ def airflow_dag_states():
             runs = data.get("dag_runs", [])
             states[dag] = runs[0]["state"] if runs else "none"
         except Exception:
+            DASHBOARD_API_ERRORS.labels(source="airflow").inc()
             states[dag] = "unreachable"
     return states
 
@@ -227,6 +258,7 @@ def snapshot_thread():
             minio = minio_counts()
             airflow = airflow_dag_states()
 
+            DASHBOARD_SNAPSHOTS.inc()
             bcast({
                 "type": "snapshot",
                 "ts": datetime.now(timezone.utc).isoformat(),
@@ -259,6 +291,7 @@ def broadcaster():
                     stale.append(q)
             for q in stale:
                 clients.discard(q)
+            DASHBOARD_CLIENTS.set(len(clients))
 
 
 # ─── HTTP ──────────────────────────────────────────────────────────
@@ -283,8 +316,17 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/api/events"):
             self.stream_events()
+        elif self.path == "/metrics":
+            self.stream_metrics()
         else:
             super().do_GET()
+
+    def stream_metrics(self):
+        """Expose Prometheus text-format metrics."""
+        self.send_response(200)
+        self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+        self.end_headers()
+        self.wfile.write(generate_latest())
 
     def stream_events(self):
         self.send_response(200)
