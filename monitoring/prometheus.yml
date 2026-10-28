@@ -1,0 +1,31 @@
+# Prometheus scrape configuration for the streaming anomaly detection pipeline.
+#
+# Run Prometheus locally and point it at this file:
+#   prometheus --config.file=monitoring/prometheus.yml
+#
+# Endpoints scraped:
+#   - Faust worker (Docker):  http://localhost:9090/metrics
+#   - Anomaly sink (local):   http://localhost:9101/metrics
+#   - Normal sink (local):    http://localhost:9102/metrics
+#   - Dashboard (local):      http://localhost:8082/metrics
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "faust-worker"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "anomaly-sink"
+    static_configs:
+      - targets: ["localhost:9101"]
+
+  - job_name: "normal-sink"
+    static_configs:
+      - targets: ["localhost:9102"]
+
+  - job_name: "dashboard"
+    static_configs:
+      - targets: ["localhost:8082"]
