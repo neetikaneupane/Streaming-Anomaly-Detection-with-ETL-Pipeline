@@ -23,7 +23,7 @@ from pathlib import Path
 import boto3
 import psycopg2
 from kafka import KafkaConsumer, TopicPartition
-from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 # ─── CONFIG ────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP = "localhost:9092"
