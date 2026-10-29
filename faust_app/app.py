@@ -13,6 +13,7 @@ WINDOW_GRACE_S = 30
 STATE_WINDOW_COUNT = 10
 ANOMALY_ZSCORE_THRESHOLD = 3.0
 PROMETHEUS_PORT = 9090
+DEAD_LETTER_TOPIC = "dead-letter"
 
 # ─── PROMETHEUS METRICS ───────────────────────────────────────
 FAUST_EVENTS_PROCESSED = Counter(
@@ -43,6 +44,12 @@ FAUST_LATE_ARRIVALS = Counter(
 FAUST_ERRORS = Counter(
     "faust_processing_errors_total",
     "Total processing errors",
+    ["error_type"],
+)
+
+FAUST_DEAD_LETTERS_TOTAL = Counter(
+    "faust_dead_letters_total",
+    "Total events routed to the dead-letter topic",
     ["error_type"],
 )
 
@@ -104,6 +111,7 @@ app = faust.App(
 raw_metrics_topic = app.topic("raw-metrics")
 anomalies_topic   = app.topic("anomalies")
 normal_topic      = app.topic("normal-events")
+dead_letter_topic = app.topic(DEAD_LETTER_TOPIC)
 
 # ─── STATE TABLE (plain dicts — fully JSON serializable) ──
 metric_states = app.Table("metric-states", default=dict, partitions=3)
@@ -172,6 +180,10 @@ async def process_metrics(stream):
         start = time.perf_counter()
         try:
             now = datetime.now(timezone.utc)
+            # safe defaults so dead-letter / labels work even on early failure
+            metric_name = "unknown"
+            host = "unknown"
+            metric_key = "unknown:unknown"
 
             if not isinstance(event, dict):
                 event = json.loads(event)
@@ -253,7 +265,25 @@ async def process_metrics(stream):
                 await normal_topic.send(key=metric_key, value=event)
                 print(f"✅ normal   {metric_key:<30} value={value:>10.4f}  baseline={baseline['mean']:>10.4f} ± {baseline['stddev']:.4f}  z={zscore:>7.4f}")
         except Exception as ex:
-            FAUST_ERRORS.labels(error_type=type(ex).__name__).inc()
+            error_type = type(ex).__name__
+            FAUST_ERRORS.labels(error_type=error_type).inc()
+            FAUST_DEAD_LETTERS_TOTAL.labels(error_type=error_type).inc()
+
+            # route the failing event to the dead-letter topic for inspection / replay
+            dl_record = {
+                "error": str(ex),
+                "error_type": error_type,
+                "failed_at": now.isoformat(),
+                "metric_name": metric_name,
+                "host": host,
+                "original_event": event if isinstance(event, dict) else str(event),
+            }
+            try:
+                await dead_letter_topic.send(key=metric_key, value=dl_record)
+                print(f"📨 DEAD-LETTER {metric_key:<30} error={error_type}: {ex}")
+            except Exception as send_ex:
+                print(f"[ERROR] failed to send dead-letter: {send_ex}")
+
             print(f"[ERROR] processing event: {ex}")
         finally:
             # record processing duration for every event (success or error)
